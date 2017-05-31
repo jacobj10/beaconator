@@ -1,27 +1,40 @@
 import time
 from threading import Thread
 
-from scapy.all import Dot11,Dot11Beacon,Dot11Elt,RadioTap,sendp,sniff, Ether
+from scapy.all import Dot11,Dot11Beacon,Dot11Elt,RadioTap,sendp,sniff, Dot11ProbeResp
+
 
 netSSID = 'testSSID'       #Network name here
 iface = 'mon0'         #Interface name here
 
 def sniff_packets():
-    resp = sniff(iface=iface,  lfilter=is_resp)
+    resp = sniff(iface=iface,  prn=is_resp)
 
-def is_resp(pkt):
-    if pkt.getlayer('Dot11').fields['addr1'] == '22:22:22:22:22:22':
-        print 11
-    return False
+def is_resp(packet):
+    if len(packet.notdecoded[8:9]) > 0:  # Driver sent radiotap header flags
+        # This means it doesn't drop packets with a bad FCS itself
+        flags = ord(packet.notdecoded[8:9])
+        if flags & 64 != 0:  # BAD_FCS flag is set
+            return
+    if packet.type == 0:
+        if packet.subtype == 0x04:  # Probe request
+            if Dot11Elt in packet:
+                ssid = packet[Dot11Elt].info
 
-def exand(pkt):
-    yield pkt.name
-    while pkt.payload:
-        pkt = pkt.payload
-        yield pkt.name
+                print("Probe request for SSID {} by MAC {}".format(ssid, packet.addr2))
+                if ssid == netSSID or (Dot11Elt in packet and packet[Dot11Elt].len == 0):
+                    send_probe_resp(packet.addr2)
+
+def send_probe_resp(target):
+    dot11 = Dot11(type=0, subtype=5, addr1='ff:ff:ff:ff:ff:ff',
+    addr2='22:22:22:22:22:22', addr3='22:22:22:22:22:22')
+    probe = Dot11ProbeResp(beacon_interval=0x0064, cap=0x2104)
+    essid = essid = Dot11Elt(ID='SSID',info=netSSID, len=len(netSSID))
+    resp_frame = RadioTap()/dot11/probe/essid
+    sendp(resp_frame, iface=iface, verbose=False)
 
 dot11 = Dot11(type=0, subtype=8, addr1='ff:ff:ff:ff:ff:ff',
-addr2='22:22:22:22:22:22', addr3='33:33:33:33:33:33')
+addr2='22:22:22:22:22:22', addr3='22:22:22:22:22:22')
 beacon = Dot11Beacon(cap='ESS+privacy')
 essid = Dot11Elt(ID='SSID',info=netSSID, len=len(netSSID))
 rsn = Dot11Elt(ID='RSNinfo', info=(
